@@ -30,15 +30,12 @@ class ImportTransactions extends Command
 
     protected $wave;
 
-    protected $sales_tax_id;
-
     public function __construct(StripeApiClient $stripe_client, WaveApiClient $wave_client)
     {
         parent::__construct();
 
         $this->stripe = $stripe_client;
         $this->wave = $wave_client;
-        $this->sales_tax_id = config('services.wave.sales_tax_id');
     }
 
     /**
@@ -50,6 +47,7 @@ class ImportTransactions extends Command
     {
         $business_id = $this->getBusinessId();
 
+        $sales_tax_account_id = $this->getSalesTaxAccountId($business_id);
         $anchor_account_id = $this->getAnchorAccountId($business_id);
         $stripe_fee_account_id = $this->getStripeFeeAccountId($business_id);
         $ticket_account_id = $this->getTicketSalesAccountId($business_id);
@@ -57,63 +55,95 @@ class ImportTransactions extends Command
 
         $payouts = $this->stripe->listPayouts();
 
+        $bar = $this->output->createProgressBar($payouts->count());
+
+        $bar->start();
+
         foreach ($payouts as $payout) {
             $transactions = $this->stripe->getTransactionsForPayout($payout->id);
 
             $payload = [
                 'input' => [
                     'businessId' => $business_id,
-                    'externalId' => $payout->id,
+                    'externalId' => config('services.wave.prefix') . $payout->id,
                     'date' => Carbon::createFromTimestampUTC($payout->arrival_date)->format('Y-m-d'),
-                    'description' => $payout->description,
+                    'description' => $payout->description . ' ' . $payout->id,
                     'anchor' => [
-                        'direction' => 'DEPOSIT',
+                        'direction' => $payout->amount > 0 ? 'DEPOSIT' : 'WITHDRAWAL',
                         'accountId' => $anchor_account_id,
-                        'amount' => number_format($payout->amount / 100, 2)
+                        'amount' => abs($payout->amount) / 100,
                     ],
                     'lineItems' => [],
                 ]
             ];
 
-            foreach ($transactions as $transaction) {
-                // If this is a sponsorship, we don't need to assign sales tax.
-                if (Str::contains(strtolower($transaction->description), 'sponsorship')) {
-                    $line_item = [
-                        'amount' => number_format($transaction->amount / 100, 2),
-                        'accountId' => $sponsorship_account_id,
-                        'balance' => 'CREDIT',
-                        'description' => 'Sponsorships'
-                    ];
-                } else {
-                    $line_item = [
-                        'amount' => number_format($transaction->amount / 100, 2),
-                        'accountId' => $ticket_account_id,
-                        'balance' => 'CREDIT',
-                        'description' => 'Total ticket purchases amount',
-                        'taxes' => [
-                            'salesTaxId' => $this->sales_tax_id,
-                            'amount' => 8.25
-                        ]
-                    ];
-                }
-
-                $payload['input']['lineItems'][] = $line_item;
-
-                // Stripe fee
+            $sponsorships_total = $transactions->filter(function ($transaction) {
+                return Str::contains(strtolower($transaction->description), 'sponsorship');
+            })
+            ->reduce(fn($carry, $transaction) => ($carry + $transaction->amount), 0);
+            if ($sponsorships_total !== 0) {
                 $payload['input']['lineItems'][] = [
-                    'accountId' => $stripe_fee_account_id,
-                    'amount' => number_format($transaction->fee / 100, 2),
-                    'balance' => 'DEBIT',
-                    'description' => (Str::contains(strtolower($transaction->description), 'sponsorship'))
-                        ? 'Sponsorship Stripe fees'
-                        : 'Stripe fees'
+                    'amount' => abs($sponsorships_total) / 100,
+                    'accountId' => $sponsorship_account_id,
+                    'balance' => $sponsorships_total > 0 ? 'CREDIT' : 'DEBIT',
+                    'description' => 'Sponsorships' . ($sponsorships_total > 0 ? '' : ' (Refund)')
                 ];
             }
 
-            dd($payload, $this->option('live-run'));
+            $sponsorships_fee_total = $transactions->filter(function ($transaction) {
+                return Str::contains(strtolower($transaction->description), 'sponsorship');
+            })
+            ->reduce(fn($carry, $transaction) => ($carry + $transaction->fee), 0);
+            if ($sponsorships_fee_total !== 0) {
+                $payload['input']['lineItems'][] = [
+                    'accountId' => $stripe_fee_account_id,
+                    'amount' => $sponsorships_fee_total / 100,
+                    'balance' => 'DEBIT',
+                    'description' => 'Sponsorship Stripe fees',
+                ];
+            }
+
+            $sales_total = $transactions->filter(function ($transaction) {
+                return !Str::contains(strtolower($transaction->description), 'sponsorship');
+            })
+            ->reduce(fn($carry, $transaction) => ($carry + $transaction->amount), 0);
+            if ($sales_total !== 0) {
+                $payload['input']['lineItems'][] = [
+                    'amount' => abs($sales_total) / 100,
+                    'accountId' => $ticket_account_id,
+                    'balance' => $sales_total > 0 ? 'CREDIT' : 'DEBIT',
+                    'description' => 'Total ticket purchases amount' . ($sales_total > 0 ? '' : ' (Refund)'),
+                    'taxes' => [
+                        'salesTaxId' => $sales_tax_account_id,
+                        'amount' => 8.25
+                    ]
+                ];
+            }
+
+            $sales_fee_total = $transactions->filter(function ($transaction) {
+                return !Str::contains(strtolower($transaction->description), 'sponsorship');
+            })
+            ->reduce(fn($carry, $transaction) => ($carry + $transaction->fee), 0);
+            if ($sales_fee_total !== 0 && $sales_total > 0) {
+                $payload['input']['lineItems'][] = [
+                    'accountId' => $stripe_fee_account_id,
+                    'amount' => $sales_fee_total / 100,
+                    'balance' => 'DEBIT',
+                    'description' => 'Stripe fees',
+                ];
+            }
+
+            try {
+                $this->wave->createTransaction($payload);
+            } catch (WaveApiClientException $e) {
+                dump($e->getMessage());
+                dump($e->getErrors());
+            }
+
+            $bar->advance();
         }
 
-        // TODO: run mutations
+        $bar->finish();
     }
 
     protected function getBusinessId()
@@ -184,6 +214,28 @@ class ImportTransactions extends Command
         return $accounts->where('node.name', $account)->first()['node']['id'];
     }
 
+    protected function getSalesTaxAccountId(string $business_id)
+    {
+        try {
+            $accounts = $this->wave->getSalesTaxes($business_id);
+        } catch (WaveApiClientException $e) {
+            $this->error($e->getMessage());
+            $this->error(json_encode($e->getErrors()));
+            exit;
+        }
+
+        $accounts = collect($accounts['business']['salesTaxes']['edges'] ?? []);
+
+        $account = $this->choice(
+            'Which account should be used for sales tax?',
+            $accounts->pluck('node.name')->all(),
+        );
+
+        $this->line('You selected account `' . $account . '` as the sales tax account.');
+
+        return $accounts->where('node.name', $account)->first()['node']['id'];
+    }
+
     protected function getAccounts(string $business_id)
     {
         try {
@@ -191,6 +243,7 @@ class ImportTransactions extends Command
         } catch (WaveApiClientException $e) {
             $this->error($e->getMessage());
             $this->error(json_encode($e->getErrors()));
+            exit;
         }
 
         return collect($accounts['business']['accounts']['edges'] ?? []);

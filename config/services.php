@@ -5,6 +5,7 @@ return [
         'graphql_endpoint' => env('WAVE_GRAPHQL_ENDPOINT'),
         'full_access_token' => env('WAVE_FULL_ACCESS_TOKEN'),
         'sales_tax_id' => env('SALES_TAX_ID'),
+        'prefix' => env('WAVE_TRANSACTION_PREFIX'),
     ],
 
     'stripe' => [

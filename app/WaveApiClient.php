@@ -14,6 +14,7 @@ class WaveApiClient
         $this->graphql_client = ClientBuilder::build(
             config('services.wave.graphql_endpoint'),
             [
+                'http_errors' => false,
                 'headers' => [
                     'Authorization' => 'Bearer ' . config('services.wave.full_access_token')
                 ]
@@ -25,7 +26,7 @@ class WaveApiClient
     {
         $query = <<<'QUERY'
         query {
-            businesses(page: 1, pageSize: 100) {
+            businesses(page: 1, pageSize: 20) {
                 pageInfo {
                     currentPage
                     totalPages
@@ -103,6 +104,35 @@ class WaveApiClient
         return $response->getData();
     }
 
+    public function getSalesTaxes(string $businessId) : array
+    {
+        $query = <<<'QUERY'
+        query($id: ID!) {
+            business(id: $id) {
+                salesTaxes(page:1, pageSize: 10) {
+                    edges {
+                        node {
+                            id
+                            name
+                            rate
+                        }
+                    }
+                }
+            }
+        }
+        QUERY;
+
+        $response = $this->graphql_client->query($query, ['id' => $businessId]);
+
+        if ($response->hasErrors()) {
+            $exception = new WaveApiClientException('Error fetching businesses');
+            $exception->setErrors($response->getErrors());
+            throw $exception;
+        }
+
+        return $response->getData();
+    }
+
     public function createTransaction(array $payload)
     {
         $query = <<<'QUERY'
@@ -120,5 +150,21 @@ class WaveApiClient
             }
         }
         QUERY;
+
+        $response = $this->graphql_client->query($query, $payload);
+
+        if ($response->hasErrors()) {
+            $exception = new WaveApiClientException('Error creating transaction');
+            $exception->setErrors($response->getErrors());
+            throw $exception;
+        }
+
+        if (!$response->getData()['moneyTransactionCreate']['didSucceed']) {
+            $exception = new WaveApiClientException('Error creating transaction');
+            $exception->setErrors($response->getData()['inputErrors']);
+            throw $exception;
+        }
+
+        return $response->getData();
     }
 }
