@@ -161,7 +161,7 @@ class WaveApiClient
 
         if (!$response->getData()['moneyTransactionCreate']['didSucceed']) {
             $exception = new WaveApiClientException('Error creating transaction');
-            $exception->setErrors($response->getData()['inputErrors']);
+            $exception->setErrors($response->getData()['moneyTransactionCreate']['inputErrors']);
             throw $exception;
         }
 
