@@ -49,7 +49,7 @@ class ImportTransactions extends Command
     {
         $business_id = $this->getBusinessId();
 
-        $sales_tax_account_id = $this->getSalesTaxAccountId($business_id);
+        [$sales_tax_account_id, $sales_tax_account_rate] = $this->getSalesTaxAccount($business_id);
         $anchor_account_id = $this->getAnchorAccountId($business_id);
         $stripe_fee_account_id = $this->getStripeFeeAccountId($business_id);
         $ticket_account_id = $this->getTicketSalesAccountId($business_id);
@@ -115,6 +115,10 @@ class ImportTransactions extends Command
             })
             ->reduce(fn($carry, $transaction) => ($carry + $transaction->amount), 0);
             if ($sales_total !== 0) {
+                $sales_tax_amount = (
+                    abs($sales_total)
+                    - abs($sales_total / (1 + $sales_tax_account_rate))
+                ) / 100;
                 $payload['input']['lineItems'][] = [
                     'amount' => abs($sales_total) / 100,
                     'accountId' => $ticket_account_id,
@@ -122,7 +126,7 @@ class ImportTransactions extends Command
                     'description' => 'Total ticket purchases amount' . ($sales_total > 0 ? '' : ' (Refund)'),
                     'taxes' => [
                         'salesTaxId' => $sales_tax_account_id,
-                        'amount' => 8.25
+                        'amount' => round($sales_tax_amount, 2)
                     ]
                 ];
             }
@@ -221,7 +225,7 @@ class ImportTransactions extends Command
         return $accounts->where('node.name', $account)->first()['node']['id'];
     }
 
-    protected function getSalesTaxAccountId(string $business_id)
+    protected function getSalesTaxAccount(string $business_id)
     {
         try {
             $accounts = $this->wave->getSalesTaxes($business_id);
@@ -240,7 +244,10 @@ class ImportTransactions extends Command
 
         $this->line('You selected account `' . $account . '` as the sales tax account.');
 
-        return $accounts->where('node.name', $account)->first()['node']['id'];
+        return [
+            $accounts->where('node.name', $account)->first()['node']['id'],
+            $accounts->where('node.name', $account)->first()['node']['rate'],
+        ];
     }
 
     protected function getAccounts(string $business_id)
