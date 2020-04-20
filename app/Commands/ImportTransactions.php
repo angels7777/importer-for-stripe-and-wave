@@ -144,11 +144,16 @@ class ImportTransactions extends Command
                 ];
             }
 
+            if ($this->option('live-run')) {
             try {
                 $this->wave->createTransaction($payload);
             } catch (WaveApiClientException $e) {
                 dump($e->getMessage());
                 dump($e->getErrors());
+            }
+            } else {
+                $this->line('Dry run: not importing payout ' . $payout->id);
+                $this->line(json_encode($payload));
             }
 
             $bar->advance();
