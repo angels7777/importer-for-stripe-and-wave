@@ -19,7 +19,13 @@ class ImportTransactions extends Command
      */
     protected $signature = 'import
                             {--live-run : Whether to run the import in live mode (defaults to a dry run)}
-                            {--date= : The first date to pull transactions from (Y-m-d, UTC)}';
+                            {--date= : The first date to pull transactions from (Y-m-d, UTC)}
+                            {--business= : Business name}
+                            {--anchor= : Anchor account name}
+                            {--salestax= : Sales tax account name}
+                            {--sales= : Sales account name}
+                            {--sponsorships= : Sponsorships account name}
+                            {--stripe= : Stripe fees account name}';
 
     /**
      * The description of the command.
@@ -145,12 +151,12 @@ class ImportTransactions extends Command
             }
 
             if ($this->option('live-run')) {
-            try {
-                $this->wave->createTransaction($payload);
-            } catch (WaveApiClientException $e) {
-                dump($e->getMessage());
-                dump($e->getErrors());
-            }
+                try {
+                    $this->wave->createTransaction($payload);
+                } catch (WaveApiClientException $e) {
+                    dump($e->getMessage());
+                    dump($e->getErrors());
+                }
             } else {
                 $this->line('Dry run: not importing payout ' . $payout->id);
                 $this->line(json_encode($payload));
@@ -165,6 +171,10 @@ class ImportTransactions extends Command
     protected function getBusinessId()
     {
         $businesses = collect($this->wave->listBusinesses()['businesses']['edges'] ?? []);
+        $business_name = $this->option('business');
+        if ($business_name && $business = $businesses->where('node.name', $business_name)->first()) {
+            return $business['node']['id'];
+        }
 
         $business = $this->choice(
             'Select a Business',
@@ -177,6 +187,11 @@ class ImportTransactions extends Command
     protected function getAnchorAccountId(string $business_id)
     {
         $accounts = $this->getAccounts($business_id);
+
+        $anchor_name = $this->option('anchor');
+        if ($anchor_name && $account = $accounts->where('node.name', $anchor_name)->first()) {
+            return $account['node']['id'];
+        }
 
         $account = $this->choice(
             'Which account should be used as the anchor?',
@@ -192,6 +207,11 @@ class ImportTransactions extends Command
     {
         $accounts = $this->getAccounts($business_id);
 
+        $acct_name = $this->option('sales');
+        if ($acct_name && $account = $accounts->where('node.name', $acct_name)->first()) {
+            return $account['node']['id'];
+        }
+
         $account = $this->choice(
             'Which account should be used for ticket sales income?',
             $accounts->pluck('node.name')->all(),
@@ -206,6 +226,11 @@ class ImportTransactions extends Command
     {
         $accounts = $this->getAccounts($business_id);
 
+        $acct_name = $this->option('sponsorships');
+        if ($acct_name && $account = $accounts->where('node.name', $acct_name)->first()) {
+            return $account['node']['id'];
+        }
+
         $account = $this->choice(
             'Which account should be used for sponsorship income?',
             $accounts->pluck('node.name')->all(),
@@ -219,6 +244,11 @@ class ImportTransactions extends Command
     protected function getStripeFeeAccountId(string $business_id)
     {
         $accounts = $this->getAccounts($business_id);
+
+        $acct_name = $this->option('stripe');
+        if ($acct_name && $account = $accounts->where('node.name', $acct_name)->first()) {
+            return $account['node']['id'];
+        }
 
         $account = $this->choice(
             'Which account should be used for Stripe fees?',
@@ -239,8 +269,12 @@ class ImportTransactions extends Command
             $this->error(json_encode($e->getErrors()));
             exit;
         }
-
         $accounts = collect($accounts['business']['salesTaxes']['edges'] ?? []);
+
+        $acct_name = $this->option('salestax');
+        if ($acct_name && $account = $accounts->where('node.name', $acct_name)->first()) {
+            return [$account['node']['id'], $account['node']['rate']];
+        }
 
         $account = $this->choice(
             'Which account should be used for sales tax?',

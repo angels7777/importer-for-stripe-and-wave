@@ -14,3 +14,7 @@ https://developer.waveapps.com/hc/en-us/articles/360020948171-Create-a-Wave-Acco
 
 ## Usage
 `php wave-stripe` to see the list of commands. The default command has an interactive prompt for setting the correct business and accounts to operate on.
+
+Accounts can be determined interactively or provided as options. Here is an example of a command with all accounts provided as options:
+
+`php wave-stripe import --date=2020-03-15 --business="Longhorn PHP, LLC" --salestax="Texas Sales & Use Tax" --anchor="CHK *2310" --stripe="Stripe Processing Fees" --sales="Sales - Unearned Income" --sponsorships="Sponsorships - Unearned Income"`
