@@ -14,9 +14,13 @@ class StripeApiClient
         Stripe::setApiKey(config('services.stripe.secret_key'));
     }
 
-    public function listPayouts()
+    public function listPayouts($date = null)
     {
-        $payoutsCollection = Payout::all(['limit' => 100]);
+        $options = ['limit' => 100];
+        if ($date) {
+            $options['arrival_date'] = ['gte' => $date];
+        }
+        $payoutsCollection = Payout::all($options);
         $payouts = collect();
 
         foreach ($payoutsCollection->autoPagingIterator() as $payout) {

@@ -6,6 +6,7 @@ use App\Exceptions\WaveApiClientException;
 use App\StripeApiClient;
 use App\WaveApiClient;
 use Carbon\Carbon;
+use Carbon\CarbonTimeZone;
 use Illuminate\Support\Str;
 use LaravelZero\Framework\Commands\Command;
 
@@ -17,7 +18,8 @@ class ImportTransactions extends Command
      * @var string
      */
     protected $signature = 'import
-                            {--live-run : Whether to run the import in live mode (defaults to a dry run)}';
+                            {--live-run : Whether to run the import in live mode (defaults to a dry run)}
+                            {--date= : The first date to pull transactions from (Y-m-d, UTC)}';
 
     /**
      * The description of the command.
@@ -53,7 +55,12 @@ class ImportTransactions extends Command
         $ticket_account_id = $this->getTicketSalesAccountId($business_id);
         $sponsorship_account_id = $this->getSponsorshipAccountId($business_id);
 
-        $payouts = $this->stripe->listPayouts();
+        $start_date = $this->option('date');
+        if ($start_date) {
+            $start_date = Carbon::parse($start_date, new CarbonTimeZone('UTC'))->timestamp;
+        }
+
+        $payouts = $this->stripe->listPayouts($start_date);
 
         $bar = $this->output->createProgressBar($payouts->count());
 
